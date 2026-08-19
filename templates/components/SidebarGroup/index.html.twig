@@ -1,0 +1,50 @@
+{% props group, groupIndex = 0 %}
+
+{% set items = group.getItems|filter(item => item.isVisible) %}
+{% set itemsId = 'sy-pa-sidebar-group-items-' ~ groupIndex %}
+
+{% set collapsible = group.isCollapsible %}
+{% set labelTag = collapsible ? 'button' : 'div' %}
+
+{% set sidebarController = 'sylament--panels--sidebar' %}
+
+<li
+    {{ attrs({
+        class: ['sy sy-pa-sidebar-group', {
+            'sy-collapsed': group.isCollapsed,
+            'sy-active': group.isActive,
+        }],
+        'data-group-label': group.getLabel,
+    }, attributes.all) }}
+>
+    {% if group.getLabel %}
+        <{{ labelTag }}
+            {{ attrs({
+                class: 'sy-pa-sidebar-group-btn',
+                type: collapsible ? 'button' : null,
+                'aria-expanded': collapsible ? (group.isCollapsed ? 'false' : 'true') : null,
+                'aria-controls': collapsible ? itemsId : null,
+            }, collapsible ? stimulus_action(sidebarController, 'toggleGroup') : null) }}
+        >
+            {% if group.getIcon %}
+                <twig:SylamentSupport:Icon :icon="group.getIcon" class="sy-pa-sidebar-group-icon" />
+            {% endif %}
+
+            <span class="sy-pa-sidebar-group-label">{{ group.getLabel }}</span>
+
+            {% if collapsible %}
+                <twig:SylamentSupport:Icon
+                    icon="heroicons:chevron-up-20-solid"
+                    :alias="constant('Sylament\\Panels\\Twig\\PanelsIconAlias::SIDEBAR_GROUP_COLLAPSE_BUTTON')"
+                    class="sy-pa-sidebar-group-chevron"
+                />
+            {% endif %}
+        </{{ labelTag }}>
+    {% endif %}
+
+    <ul id="{{ itemsId }}" class="sy-pa-sidebar-group-items">
+        {% for item in items %}
+            <twig:SylamentPanels:SidebarItem :item="item" />
+        {% endfor %}
+    </ul>
+</li>

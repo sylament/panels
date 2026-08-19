@@ -1,0 +1,7 @@
+.sy-pa-topbar .sy-pa-user-menu-trigger {
+    @apply shrink-0;
+
+    & .sy-icon {
+        @apply size-8;
+    }
+}

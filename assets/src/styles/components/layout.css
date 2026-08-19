@@ -1,0 +1,26 @@
+.sy-pa-body {
+    @apply font-(family-name:--sy-font) flex min-h-dvh flex-col bg-gray-50 font-normal text-gray-950 antialiased dark:bg-gray-950 dark:text-white;
+    /* `font-sans` inside the panel means the panel's face, not Tailwind's default stack. */
+    --font-sans: var(--sy-font);
+    --sy-sidebar-width: 18rem;
+}
+
+.sy-pa-layout {
+    @apply flex h-full w-full flex-1 overflow-x-clip;
+}
+
+.sy-pa-main-ctn {
+    @apply flex min-w-0 flex-1 flex-col;
+}
+
+.sy-pa-main {
+    @apply mx-auto h-full w-full max-w-7xl px-4 md:px-6 lg:px-8;
+}
+
+.sy-pa-skip-link {
+    @apply sr-only;
+
+    &:focus {
+        @apply not-sr-only fixed start-4 top-4 z-50 rounded-lg bg-white px-3 py-2 text-sm font-medium text-gray-950 shadow-lg ring-1 ring-gray-950/5 outline-none dark:bg-gray-900 dark:text-white dark:ring-white/10;
+    }
+}

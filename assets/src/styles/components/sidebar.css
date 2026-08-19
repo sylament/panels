@@ -1,0 +1,107 @@
+.sy-pa-sidebar {
+    @apply fixed inset-y-0 start-0 z-30 flex h-dvh w-(--sy-sidebar-width) -translate-x-full flex-col content-start bg-white transition-all lg:sticky lg:top-16 lg:z-20 lg:h-[calc(100dvh-4rem)] lg:translate-x-0 lg:bg-transparent lg:transition-none rtl:translate-x-full lg:rtl:-translate-x-0 dark:bg-gray-900 dark:lg:bg-transparent;
+}
+
+.sy-pa-sidebar-open .sy-pa-sidebar {
+    @apply translate-x-0 shadow-xl ring-1 ring-gray-950/5 lg:shadow-none lg:ring-0 rtl:-translate-x-0 dark:ring-white/10;
+}
+
+.sy-pa-sidebar-overlay {
+    @apply fixed inset-0 z-30 hidden bg-gray-950/50 dark:bg-gray-950/75;
+}
+
+.sy-pa-sidebar-open .sy-pa-sidebar-overlay {
+    @apply block lg:hidden;
+}
+
+.sy-pa-sidebar-header-ctn {
+    @apply overflow-x-clip;
+}
+
+.sy-pa-sidebar-header {
+    @apply flex h-16 items-center justify-center bg-white px-6 ring-1 ring-gray-950/5 lg:hidden dark:bg-gray-900 dark:ring-white/10;
+}
+
+.sy-pa-sidebar-header-logo-ctn {
+    @apply flex-1;
+}
+
+.sy-pa-sidebar-nav {
+    @apply flex grow flex-col gap-y-7 overflow-x-hidden overflow-y-auto px-6 py-8;
+    scrollbar-gutter: stable;
+}
+
+.sy-pa-sidebar-nav-groups {
+    @apply -mx-2 flex flex-col gap-y-7;
+}
+
+.sy-pa-sidebar-group {
+    @apply flex flex-col gap-y-1;
+
+    &.sy-collapsed {
+        & .sy-pa-sidebar-group-items {
+            @apply hidden;
+        }
+
+        & .sy-pa-sidebar-group-chevron {
+            @apply -rotate-180;
+        }
+    }
+}
+
+.sy-pa-sidebar-group-btn {
+    @apply flex w-full items-center gap-x-3 rounded-lg p-2 text-start;
+}
+
+/* Only the collapsible group renders its label as a button, so the element selector is what
+   keeps the interactive affordances off a non-collapsible group's plain label. */
+button.sy-pa-sidebar-group-btn {
+    @apply cursor-pointer outline-hidden transition duration-75 hover:bg-gray-100 focus-visible:bg-gray-100 dark:hover:bg-white/5 dark:focus-visible:bg-white/5;
+}
+
+.sy-pa-sidebar-group-icon,
+.sy-pa-sidebar-group-chevron {
+    @apply text-gray-400 dark:text-gray-500;
+}
+
+.sy-pa-sidebar-group-chevron {
+    @apply transition-transform duration-75;
+}
+
+.sy-pa-sidebar-group-label {
+    @apply flex-1 truncate text-sm leading-6 font-medium text-gray-500 dark:text-gray-400;
+}
+
+.sy-pa-sidebar-group-items {
+    @apply flex flex-col gap-y-1;
+}
+
+.sy-pa-sidebar-item-btn {
+    @apply flex items-center gap-x-3 rounded-lg p-2 outline-hidden transition duration-75 hover:bg-gray-100 focus-visible:bg-gray-100 dark:hover:bg-white/5 dark:focus-visible:bg-white/5;
+}
+
+.sy-pa-sidebar-item-icon {
+    @apply text-gray-400 dark:text-gray-500;
+}
+
+.sy-pa-sidebar-item-label {
+    @apply flex-1 truncate text-sm font-medium text-gray-700 dark:text-gray-200;
+}
+
+.sy-pa-sidebar-item.sy-active {
+    & .sy-pa-sidebar-item-btn {
+        @apply bg-gray-100 dark:bg-white/5;
+    }
+
+    & .sy-pa-sidebar-item-icon,
+    & .sy-pa-sidebar-item-label {
+        @apply text-primary-700 dark:text-primary-400;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .sy-pa-sidebar,
+    .sy-pa-sidebar-group-chevron {
+        transition: none;
+    }
+}

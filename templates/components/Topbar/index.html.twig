@@ -1,0 +1,37 @@
+{% props
+    brandName = null,
+
+    end = markup(block('end') ?? null)
+%}
+
+{% set hasEnd = end is filled %}
+
+{% set sidebarController = 'sylament--panels--sidebar' %}
+
+<div {{ attrs({class: 'sy sy-pa-topbar-ctn'}, attributes.all) }}>
+    <nav id="sy-pa-topbar" class="sy-pa-topbar" aria-label="Topbar">
+        <button
+            {{ attrs({
+                type: 'button',
+                class: 'sy-pa-topbar-open-sidebar-btn',
+                'aria-controls': 'sy-pa-sidebar',
+                'aria-expanded': 'false',
+                'aria-label': 'Toggle sidebar',
+            }, stimulus_action(sidebarController, 'toggle')|stimulus_target(sidebarController, 'toggleButton')) }}
+        >
+            <twig:SylamentSupport:Icon icon="heroicons:bars-3" :alias="constant('Sylament\\Panels\\Twig\\PanelsIconAlias::TOPBAR_OPEN_SIDEBAR_BUTTON')" />
+        </button>
+
+        <div class="sy-pa-topbar-start">
+            <twig:SylamentPanels:Logo :brandName="brandName" />
+        </div>
+
+        <div class="sy-pa-topbar-end">
+            {% if hasEnd %}
+                {{ end }}
+            {% endif %}
+
+            <twig:SylamentPanels:UserMenu />
+        </div>
+    </nav>
+</div>
