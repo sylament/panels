@@ -7,12 +7,15 @@ namespace Sylament\Panels;
 use Sylament\Panels\Controllers\PageController;
 use Sylament\Panels\DependencyInjection\Compiler\GlobalSearchProviderPass;
 use Sylament\Panels\DependencyInjection\Compiler\PageComponentPass;
+use Sylament\Panels\DependencyInjection\Compiler\RelationManagerComponentPass;
 use Sylament\Panels\DependencyInjection\Compiler\ResourcePass;
 use Sylament\Panels\GlobalSearch\GlobalSearchProviderRegistry;
 use Sylament\Panels\GlobalSearch\Providers\Contracts\GlobalSearchProvider;
 use Sylament\Panels\GlobalSearch\Providers\DefaultGlobalSearchProvider;
 use Sylament\Panels\Pages\Dashboard;
 use Sylament\Panels\Pages\Page;
+use Sylament\Panels\Resources\RelationManagers\RelationGroup;
+use Sylament\Panels\Resources\RelationManagers\RelationManager;
 use Sylament\Panels\Resources\Resource;
 use Sylament\Panels\Resources\ResourceRegistry;
 use Sylament\Panels\Routing\PanelRouteLoader;
@@ -40,7 +43,11 @@ class SylamentPanelsBundle extends SylamentBundle
         $container->registerForAutoconfiguration(GlobalSearchProvider::class)
             ->addTag('sylament.panels.global_search_provider');
 
+        $container->registerForAutoconfiguration(RelationManager::class)
+            ->addTag('sylament.panels.relation_manager');
+
         $container->addCompilerPass(new PageComponentPass(), priority: 10);
+        $container->addCompilerPass(new RelationManagerComponentPass(), priority: 10);
         $container->addCompilerPass(new ResourcePass(), priority: 10);
         $container->addCompilerPass(new GlobalSearchProviderPass(), priority: 10);
     }
@@ -52,6 +59,9 @@ class SylamentPanelsBundle extends SylamentBundle
     {
         $configurator->services()
             ->load(__NAMESPACE__ . '\\Navigation\\', __DIR__ . '/Navigation/*.php')
+                ->autowire()
+                ->autoconfigure()
+            ->set(RelationGroup::class)
                 ->autowire()
                 ->autoconfigure()
             ->set(Panel::class)

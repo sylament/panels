@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace Sylament\Panels\Tests\Fixtures\Resources\Pages;
 
-use Sylament\Actions\EditAction;
 use Sylament\Panels\Resources\Pages\EditRecord;
 use Sylament\Panels\Tests\Fixtures\Resources\ArticleResource;
+use Symfony\UX\LiveComponent\Attribute\AsLiveComponent;
 use Symfony\UX\LiveComponent\Attribute\LiveProp;
 
 /**
@@ -16,6 +16,7 @@ use Symfony\UX\LiveComponent\Attribute\LiveProp;
  * component, and a plain property would not survive the dehydration a test
  * reads the page back through.
  */
+#[AsLiveComponent]
 final class EditHookedArticle extends EditRecord
 {
     protected static string $resource = ArticleResource::class;
@@ -32,22 +33,6 @@ final class EditHookedArticle extends EditRecord
      * `mutateFormDataBeforeSave()` upper-cases anything.
      */
     public ?string $titleSeenBeforeSave = null;
-
-    /**
-     * The header modal whose success refills this page — the pin for the refill
-     * running through `fillForm()` rather than a bare `fill()`.
-     */
-    public function editAction(): EditAction
-    {
-        return EditAction::make();
-    }
-
-    public function getHeaderActions(): array
-    {
-        return [
-            $this->editAction(),
-        ];
-    }
 
     protected function beforeFill(): void
     {
