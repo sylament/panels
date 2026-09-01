@@ -13,12 +13,20 @@ use Sylament\Actions\CreateAction;
 use Sylament\Actions\EditAction;
 use Sylament\Actions\Exceptions\ActionNotResolvableException;
 use Sylament\Actions\ViewAction;
+use Sylament\Panels\CurrentPanel;
+use Sylament\Panels\Navigation\NavigationItem;
+use Sylament\Panels\Pages\Enums\SubNavigationPosition;
 use Sylament\Panels\Pages\Page as BasePage;
+use Sylament\Panels\Resources\Pages\Concerns\InteractsWithParentRecord;
 use Sylament\Panels\Resources\Resource;
 use Sylament\Panels\Resources\ResourceRegistry;
+use Sylament\Schemas\State\Relationship;
 use Sylament\Tables\Contracts\InteractsWithTable;
+use Symfony\Component\HttpFoundation\RequestStack;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 use Symfony\Contracts\Service\Attribute\Required;
+use Symfony\UX\LiveComponent\Attribute\LiveProp;
+use Symfony\UX\LiveComponent\Attribute\PostHydrate;
 use Twig\Markup;
 
 use function Sylament\Support\filled;
@@ -28,6 +36,7 @@ abstract class Page extends BasePage implements InteractsWithActions
     use HasActions {
         getAction as private getCachedOrDeclaredAction;
     }
+    use InteractsWithParentRecord;
 
     /**
      * @var class-string<Resource>
@@ -36,7 +45,22 @@ abstract class Page extends BasePage implements InteractsWithActions
 
     protected static ?string $breadcrumb = null;
 
+    /**
+     * The panel this page was opened in. A live request reaches ux's own route,
+     * which carries no `_sylament_panel` default, so the prop restores it —
+     * without it every URL a re-render mints, from the trail to a record link,
+     * would answer for the *default* panel. Minted by the getter dehydration
+     * reads rather than in a mount, because a page's mount signature is the
+     * page's own.
+     */
+    #[LiveProp]
+    public ?string $panelId = null;
+
     private ?ResourceRegistry $resourceRegistry = null;
+
+    private ?CurrentPanel $panelContext = null;
+
+    private ?RequestStack $requests = null;
 
     /**
      * @var array<Action|ActionGroup>|null
@@ -47,6 +71,28 @@ abstract class Page extends BasePage implements InteractsWithActions
     public function setResourceRegistry(ResourceRegistry $resourceRegistry): void
     {
         $this->resourceRegistry = $resourceRegistry;
+    }
+
+    #[Required]
+    public function setPanelContext(CurrentPanel $currentPanel, RequestStack $requests): void
+    {
+        $this->panelContext = $currentPanel;
+        $this->requests = $requests;
+    }
+
+    public function getPanelId(): ?string
+    {
+        return $this->panelId ??= $this->panelContext?->get()?->getId();
+    }
+
+    #[PostHydrate]
+    public function stampPanelRequestAttribute(): void
+    {
+        if ($this->panelId === null) {
+            return;
+        }
+
+        $this->requests?->getCurrentRequest()?->attributes->set('_sylament_panel', $this->panelId);
     }
 
     /**
@@ -64,10 +110,13 @@ abstract class Page extends BasePage implements InteractsWithActions
 
     public function getResourceInstance(): Resource
     {
-        $registry = $this->resourceRegistry
-            ?? throw new LogicException(sprintf('The resource page [%s] was built outside the container, so it holds no resource registry; register it as an autowired service.', static::class));
+        return $this->getResourceRegistry()->get(static::getResource());
+    }
 
-        return $registry->get(static::getResource());
+    protected function getResourceRegistry(): ResourceRegistry
+    {
+        return $this->resourceRegistry
+            ?? throw new LogicException(sprintf('The resource page [%s] was built outside the container, so it holds no resource registry; register it as an autowired service.', static::class));
     }
 
     public function getBreadcrumb(): string|Markup
@@ -80,12 +129,91 @@ abstract class Page extends BasePage implements InteractsWithActions
      */
     public function getBreadcrumbs(): array
     {
-        $resource = $this->getResourceInstance();
-
         return [
-            $resource->getIndexUrl() => $resource->getTitleCasePluralRecordLabel(),
+            ...$this->getResourceBreadcrumbs(),
             $this->getBreadcrumb(),
         ];
+    }
+
+    public function hasResourceBreadcrumbs(): bool
+    {
+        return true;
+    }
+
+    /**
+     * The trail above this page's own crumb: for every ancestor, root-first, the
+     * resource's own listing and then the record itself, and last this
+     * resource's listing. A crumb whose URL the trail already spends renders
+     * unlinked rather than replacing the earlier one — a nested resource with no
+     * listing of its own is reached through its parent's record page, which is
+     * the crumb directly above it.
+     *
+     * @return array<int|string, string|Markup>
+     */
+    public function getResourceBreadcrumbs(): array
+    {
+        if (! $this->hasResourceBreadcrumbs()) {
+            return [];
+        }
+
+        $breadcrumbs = [];
+        $parameters = [];
+
+        foreach ($this->getResolvedParentRecords() as $link) {
+            $ancestorResource = $link['resource'];
+            $ancestorRecord = $link['record'];
+
+            $breadcrumbs = $this->appendBreadcrumb($breadcrumbs, $ancestorResource->getIndexUrl($parameters), $ancestorResource->getBreadcrumb());
+            $breadcrumbs = $this->appendBreadcrumb(
+                $breadcrumbs,
+                $this->getRecordBreadcrumbUrl($ancestorResource, $parameters, $ancestorRecord),
+                $ancestorResource->hasRecordTitle() ? $ancestorResource->getRecordTitle($ancestorRecord) : $ancestorResource->getTitleCaseRecordLabel(),
+            );
+
+            $parameters[$link['parameter']] = $ancestorResource->getRecordRouteKey($ancestorRecord);
+        }
+
+        $resource = $this->getResourceInstance();
+
+        return $this->appendBreadcrumb($breadcrumbs, $resource->getIndexUrl($parameters), $resource->getBreadcrumb());
+    }
+
+    /**
+     * A string key is the crumb's URL and renders as a link; an int key renders
+     * as plain text, which is what a URL the trail already spends becomes.
+     *
+     * @param array<int|string, string|Markup> $breadcrumbs
+     *
+     * @return array<int|string, string|Markup>
+     */
+    protected function appendBreadcrumb(array $breadcrumbs, ?string $url, string|Markup $label): array
+    {
+        if ($url === null || array_key_exists($url, $breadcrumbs)) {
+            $breadcrumbs[] = $label;
+
+            return $breadcrumbs;
+        }
+
+        $breadcrumbs[$url] = $label;
+
+        return $breadcrumbs;
+    }
+
+    /**
+     * Where a record crumb points: the resource's view page, else its edit page,
+     * else nowhere — Filament's arms with the authorization checks left out.
+     *
+     * @param array<string, string> $parameters the ancestor keys above the record
+     */
+    protected function getRecordBreadcrumbUrl(Resource $resource, array $parameters, object|string $record): ?string
+    {
+        foreach (['view', 'edit'] as $pageKey) {
+            if ($resource->hasPage($pageKey)) {
+                return $resource->getUrl($pageKey, [...$parameters, 'record' => $record]);
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -159,23 +287,94 @@ abstract class Page extends BasePage implements InteractsWithActions
         $ownsRecordClass = $recordClass === null || $recordClass === $resource->getRecordClass();
 
         if ($action instanceof CreateAction && $resource->hasPage('create') && $ownsRecordClass) {
-            return $resource->getUrl('create');
+            return $resource->getUrl('create', [...$this->parentRecords]);
         }
 
         if ($action instanceof EditAction && $resource->hasPage('edit') && ! $this instanceof EditRecord && $ownsRecordClass && $action->getRecord() !== null) {
-            return $resource->getUrl('edit', ['record' => $action->getRecord()]);
+            return $resource->getUrl('edit', [...$this->parentRecords, 'record' => $action->getRecord()]);
         }
 
         if ($action instanceof ViewAction && $resource->hasPage('view') && $ownsRecordClass && $action->getRecord() !== null) {
-            return $resource->getUrl('view', ['record' => $action->getRecord()]);
+            return $resource->getUrl('view', [...$this->parentRecords, 'record' => $action->getRecord()]);
         }
 
         return null;
     }
 
     /**
+     * A record created on a nested page joins the parent it was created under —
+     * the relationship a `CreateAction`'s own write flushes it through.
+     */
+    public function getDefaultActionRelationship(Action $action): ?Relationship
+    {
+        $parentRecord = $this->getParentRecord();
+
+        if (! $action instanceof CreateAction || $parentRecord === null) {
+            return null;
+        }
+
+        return new Relationship($parentRecord, $this->getResourceInstance()->getParentRelationshipName());
+    }
+
+    /**
+     * The page static still wins on a resource page; the resource is what
+     * answers underneath it, rather than the panel directly.
+     */
+    public function getSubNavigationPosition(): SubNavigationPosition
+    {
+        return static::$subNavigationPosition ?? $this->getResourceInstance()->getSubNavigationPosition();
+    }
+
+    /**
+     * The band item for a sibling page of a resource: its own resource mints the
+     * URL, keyed by the registration the page is mounted under and pathed like
+     * every other navigation item panels emit. A page the resource registers
+     * nowhere contributes nothing — Filament's `hasPage()` gates skip it just as
+     * silently.
+     *
+     * @param class-string<BasePage> $pageClass
+     * @param array<string, mixed>   $parameters
+     *
+     * @return array<NavigationItem>
+     */
+    protected function generateResourcePageNavigationItems(string $pageClass, array $parameters): array
+    {
+        if (! is_subclass_of($pageClass, self::class)) {
+            return [];
+        }
+
+        $resource = $this->getResourceRegistry()->get($pageClass::getResource());
+        $pageKey = null;
+
+        foreach ($resource->getPages() as $key => $registration) {
+            if ($registration->page === $pageClass) {
+                $pageKey = (string) $key;
+
+                break;
+            }
+        }
+
+        if ($pageKey === null) {
+            return [];
+        }
+
+        return [
+            NavigationItem::make($pageClass::getNavigationLabel())
+                ->group($pageClass::getNavigationGroup())
+                ->icon($pageClass::getNavigationIcon())
+                ->activeIcon($pageClass::getActiveNavigationIcon())
+                ->sort($pageClass::getNavigationSort())
+                ->badge($pageClass::getNavigationBadge(), color: $pageClass::getNavigationBadgeColor())
+                ->url($resource->getUrl($pageKey, $parameters, isAbsolute: false, shouldGuessMissingParameters: true))
+                ->isActiveWhen(fn (): bool => $pageClass === static::class),
+        ];
+    }
+
+    /**
      * A resource page resolves a frame's record key through the resource's
-     * scoped binding, never a bare `find()` — after the trait's own guards.
+     * scoped binding, never a bare `find()` — after the trait's own guards. The
+     * descriptor's key is client-supplied and carries no checksum, so on a
+     * nested page it is narrowed to the parent exactly as a route key is.
      *
      * @param array{name: string, arguments: array<string, mixed>, context: array<string, mixed>} $descriptor
      */
@@ -195,7 +394,7 @@ abstract class Page extends BasePage implements InteractsWithActions
             throw new ActionNotResolvableException(sprintf('Record key of type [%s] is not a valid identifier.', get_debug_type($recordKey)));
         }
 
-        return $this->getResourceInstance()->resolveRecordRouteBinding((string) $recordKey)
+        return $this->getResourceInstance()->resolveRecordRouteBinding((string) $recordKey, $this->getParentRecordScope())
             ?? throw new NotFoundHttpException(sprintf('No record matching [%s] exists for the resource [%s].', (string) $recordKey, static::getResource()));
     }
 

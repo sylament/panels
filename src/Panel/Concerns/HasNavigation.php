@@ -76,6 +76,10 @@ trait HasNavigation
         $items = [];
 
         foreach ($this->getPages() as $page) {
+            if (! $page::shouldRegisterNavigation()) {
+                continue;
+            }
+
             foreach ($page::getNavigationItems($this) as $item) {
                 $items[] = clone $item;
             }
@@ -85,6 +89,10 @@ trait HasNavigation
             $resource = $this->getResourceRegistry()->get($resourceClass);
 
             if (! $resource->shouldRegisterNavigation()) {
+                continue;
+            }
+
+            if ($resource->getParentResourceRegistration() !== null) {
                 continue;
             }
 
