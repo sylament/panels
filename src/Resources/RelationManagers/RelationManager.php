@@ -52,6 +52,7 @@ abstract class RelationManager implements InteractsWithActions, InteractsWithSch
     use InteractsWithRelationshipTable {
         InteractsWithRelationshipTable::makeTable insteadof HasTable;
         InteractsWithRelationshipTable::makeTable as makeBaseRelationshipTable;
+        InteractsWithRelationshipTable::getTableQueryStringIdentifier insteadof HasTable;
         InteractsWithRelationshipTable::getDefaultActionUrl insteadof HasActions;
     }
 
