@@ -8,6 +8,7 @@ use Sylament\Panels\Tests\Fixtures\Doctrine\EntityManagerFactory;
 use Sylament\Panels\Tests\Fixtures\Resources\Pages\EditArticle;
 use Sylament\Panels\Tests\Fixtures\Resources\Pages\EditHookedArticle;
 use Sylament\Schemas\Components\EmbeddedSchema;
+use Sylament\Schemas\Exceptions\ValidationException;
 use Symfony\Bundle\FrameworkBundle\KernelBrowser;
 use Symfony\Component\HttpFoundation\RedirectResponse;
 use Symfony\Component\HttpFoundation\Request;
@@ -16,6 +17,10 @@ use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 use Symfony\UX\LiveComponent\Test\InteractsWithLiveComponents;
 
 uses(InteractsWithLiveComponents::class);
+
+afterEach(function (): void {
+    EditHookedArticle::$haltsBeforeSave = false;
+});
 
 /*
  * Kernel reboot is disabled for the same reason `ListRecordsTest` disables it:
@@ -66,10 +71,28 @@ it('serves the edit page with the record filled in', function (): void {
         ->and($crawler->filter('h1.sy-pa-header-heading')->text())->toBe('Edit Alpha')
         ->and($crawler->filter('.sy-pa-resource-edit-record-page > .sy-pa-page-header-main-ctn > .sy-pa-page-main > .sy-pa-page-content > form')->count())->toBe(1)
         ->and($crawler->filter('.sy-pa-resource-edit-record-page input[data-model$="data.title"]')->attr('value'))->toBe('Alpha')
-        ->and($crawler->filter('.sy-pa-resource-form-actions button[type="submit"]')->text())->toContain('Save')
+        ->and($crawler->filter('form.sy-pa-form .sy-sc-actions button[type="submit"]')->text())->toContain('Save')
         // The document title is read off the un-mounted page, where the record key
         // is still null, so it carries the record *label* rather than the title.
         ->and($html)->toContain('<title>Edit Article — Test Admin</title>');
+});
+
+it('sits a gray cancel link beside the edit submit', function (): void {
+    [$client, , $key] = editRecordClient();
+
+    $crawler = $client->request('GET', sprintf('/admin/articles/%s/edit', $key));
+
+    $cancel = $crawler->filter('form.sy-pa-form .sy-sc-actions a');
+    $submit = $crawler->filter('form.sy-pa-form .sy-sc-actions button[type="submit"]');
+
+    // `gray` is the Button policy's default and `HasDefaultGrayColor` emits no
+    // class for it, so the absence of any `sy-color` token *is* the gray arm —
+    // which is what tells the cancel link apart from the primary submit.
+    expect($cancel->count())->toBe(1)
+        ->and($cancel->text())->toContain('Cancel')
+        ->and($cancel->attr('href'))->toEndWith('/admin/articles')
+        ->and($cancel->attr('class'))->not->toContain('sy-color')
+        ->and($submit->attr('class'))->toContain('sy-color-primary');
 });
 
 it('trails the resource and the record above the edit heading', function (): void {
@@ -282,4 +305,53 @@ it('404s when a mounted frame names a record the resource cannot resolve', funct
     // scoped binding — which answers nothing for a record that never existed.
     expect(fn (): mixed => $host->mountAction('edit', [], ['recordKey' => '999999']))
         ->toThrow(NotFoundHttpException::class, 'No record matching [999999]');
+});
+
+it('rejects an invalid submit with a validation error and persists nothing', function (): void {
+    [$client, $entityManager, $key] = editRecordClient();
+
+    $host = $this->createLiveComponent(EditArticle::class, ['record' => $key], client: $client)->component();
+    $host->data = ['title' => '', 'slug' => 'alpha'];
+
+    // The save ladder catches `Halt` alone, so a required-field violation
+    // escapes it as the 422 rather than returning null and persisting nothing
+    // in silence.
+    expect(fn (): mixed => $host->save())
+        ->toThrow(ValidationException::class);
+
+    $entityManager->clear();
+
+    expect($entityManager->find(Article::class, (int) $key)?->getTitle())->toBe('Alpha');
+});
+
+it('aborts the save when a hook halts the ladder', function (): void {
+    [$client, $entityManager, $key] = editRecordClient();
+
+    EditHookedArticle::$haltsBeforeSave = true;
+
+    $host = $this->createLiveComponent(EditHookedArticle::class, ['record' => $key], client: $client)->component();
+
+    $host->calls = [];
+    $host->data = ['title' => 'alpha, edited', 'slug' => 'alpha'];
+
+    $result = $host->save();
+
+    $entityManager->clear();
+
+    // The ladder stops where the hook threw: no mutator, no write, no
+    // notification and no redirect — and today a `Halt` from here was a 500.
+    expect($result)->toBeNull()
+        ->and($host->calls)->toBe(['beforeValidate', 'afterValidate', 'beforeSave'])
+        ->and($entityManager->find(Article::class, (int) $key)?->getTitle())->toBe('Alpha');
+});
+
+it('leaves the saved-data marker null while the panel knob is off', function (): void {
+    [$client, , $key] = editRecordClient();
+
+    $host = $this->createLiveComponent(EditArticle::class, ['record' => $key], client: $client)->component();
+
+    // `admin` never arms `unsavedChangesAlerts()`, so the page composing the
+    // trait still marks nothing — the gate is the panel's, not the trait's.
+    expect($host->savedDataHash)->toBeNull()
+        ->and($host->hasUnsavedDataChangesAlert())->toBeFalse();
 });

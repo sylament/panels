@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Sylament\Panels\Navigation\NavigationGroup;
 use Sylament\Panels\Navigation\NavigationItem;
 use Sylament\Panels\Twig\PanelsIconAlias;
+use Sylament\Support\Enums\Alignment;
 use Sylament\Support\Icons\IconManager;
 use Symfony\UX\TwigComponent\Test\InteractsWithTwigComponents;
 
@@ -23,12 +24,21 @@ it('renders the full shell with stable landmarks', function (): void {
         ->toContain('href="#sy-pa-main"')
         ->toContain('<div class="sy sy-pa-topbar-ctn">')
         ->toContain('<nav id="sy-pa-topbar" class="sy-pa-topbar" aria-label="Topbar">')
-        ->toContain('<main id="sy-pa-main" class="sy-pa-main">')
+        ->toContain('<main id="sy-pa-main" class="sy-pa-main sy-width-7xl">')
         ->toContain('id="sy-pa-sidebar"')
         ->toContain('Demo Admin')
         ->toContain('<p>Body</p>')
         ->toContain('class="sy-pa-sidebar-overlay" data-action="click-&gt;sylament--panels--sidebar#close"')
         ->toMatch('/sy-pa-topbar-ctn.+<div class="sy-pa-layout">.+sy-pa-sidebar-overlay.+id="sy-pa-sidebar".+<div class="sy-pa-main-ctn">.+<main id="sy-pa-main"/s');
+});
+
+it('carries the width class the document resolved on the main element', function (): void {
+    $html = (string) $this->renderTwigComponent('SylamentPanels:Layout', [
+        'navigation' => [],
+        'maxContentWidthClass' => 'sy-width-4xl',
+    ], content: '<p>Body</p>');
+
+    expect($html)->toContain('<main id="sy-pa-main" class="sy-pa-main sy-width-4xl">');
 });
 
 it('renders the brand through the logo inside the topbar start slot', function (): void {
@@ -92,7 +102,16 @@ it('renders the actions block inside the header actions wrapper', function (): v
         'heading' => 'Articles',
     ], blocks: ['actions' => '<button type="button" id="header-action">Create</button>']);
 
-    expect($html)->toMatch('/<div class="sy-pa-header-actions">\s*<button type="button" id="header-action">Create<\/button>\s*<\/div>/');
+    expect($html)->toMatch('/<div class="sy-pa-header-actions-ctn">\s*<div class="sy-pa-header-actions">\s*<button type="button" id="header-action">Create<\/button>\s*<\/div>\s*<\/div>/');
+});
+
+it('stamps the alignment on the actions row, not on its container', function (): void {
+    $html = (string) $this->renderTwigComponent('SylamentPanels:Header', [
+        'heading' => 'Articles',
+        'actionsAlignment' => Alignment::End,
+    ], blocks: ['actions' => '<button type="button" id="header-action">Create</button>']);
+
+    expect($html)->toContain('<div class="sy-pa-header-actions sy-align-end">');
 });
 
 it('leaves the topbar without a global search field by default', function (): void {

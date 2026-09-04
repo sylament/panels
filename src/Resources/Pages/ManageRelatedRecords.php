@@ -13,8 +13,6 @@ use Sylament\Actions\ViewAction;
 use Sylament\Panels\Resources\Concerns\InteractsWithRelationshipTable;
 use Sylament\Panels\Resources\Pages\Concerns\InteractsWithRecord;
 use Sylament\Panels\Twig\PanelsIconAlias;
-use Sylament\Schemas\Concerns\HasSchemas;
-use Sylament\Schemas\Contracts\InteractsWithSchemas;
 use Sylament\Schemas\Schema;
 use Sylament\Schemas\State\Relationship;
 use Sylament\Support\Icons\IconManager;
@@ -36,9 +34,8 @@ use Twig\Markup;
  * one is never the listing its related resource answers with: the URL falls
  * through to the parent's view or edit page instead.
  */
-abstract class ManageRelatedRecords extends Page implements InteractsWithSchemas, InteractsWithTable
+abstract class ManageRelatedRecords extends Page implements InteractsWithTable
 {
-    use HasSchemas;
     use HasTable;
     use InteractsWithRecord;
     /*
@@ -52,7 +49,7 @@ abstract class ManageRelatedRecords extends Page implements InteractsWithSchemas
         InteractsWithRelationshipTable::getTableQueryStringIdentifier insteadof HasTable;
     }
 
-    protected ?string $template = '@SylamentPanels/partials/ManageRelatedRecords/index.html.twig';
+    protected ?string $template = '@SylamentPanels/partials/Page/table.html.twig';
 
     /**
      * @param array<string, string> $parentRecords
@@ -77,6 +74,7 @@ abstract class ManageRelatedRecords extends Page implements InteractsWithSchemas
             'sort' => new UrlMapping(as: 'sort'),
             'search' => new UrlMapping(as: 'search'),
             'filters' => new UrlMapping(as: 'filters'),
+            'grouping' => new UrlMapping(as: 'grouping'),
             'tab' => new UrlMapping(as: 'tab'),
             default => null,
         };
@@ -172,13 +170,14 @@ abstract class ManageRelatedRecords extends Page implements InteractsWithSchemas
     }
 
     /**
-     * The page declares no named schema of its own: an action modal's schema is
-     * minted per mount and cached, so discovery has nothing to walk.
-     *
-     * @return array<string>
+     * @return list<string>
      */
-    public function schemas(): array
+    public function getPageClasses(): array
     {
-        return [];
+        return [
+            'sy-pa-resource-manage-related-records-page',
+            'sy-pa-resource-' . str_replace('/', '-', $this->getResourceInstance()->getSlug()),
+            'sy-pa-resource-record-' . $this->getRecordKey(),
+        ];
     }
 }

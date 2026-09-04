@@ -12,8 +12,6 @@ use Sylament\Actions\CreateAction;
 use Sylament\Actions\EditAction;
 use Sylament\Actions\ViewAction;
 use Sylament\Panels\Resources\Concerns\HasTabs;
-use Sylament\Schemas\Concerns\HasSchemas;
-use Sylament\Schemas\Contracts\InteractsWithSchemas;
 use Sylament\Schemas\Schema;
 use Sylament\Tables\Concerns\HasTable;
 use Sylament\Tables\Contracts\InteractsWithTable;
@@ -23,9 +21,8 @@ use Twig\Markup;
 
 use function Sylament\Support\filled;
 
-abstract class ListRecords extends Page implements InteractsWithSchemas, InteractsWithTable
+abstract class ListRecords extends Page implements InteractsWithTable
 {
-    use HasSchemas;
     /*
      * The alias stays ungrouped with the trait it renames: Rector splits a
      * grouped `use` and drops the adaptation block with it.
@@ -35,7 +32,7 @@ abstract class ListRecords extends Page implements InteractsWithSchemas, Interac
     }
     use HasTabs;
 
-    protected ?string $template = '@SylamentPanels/partials/ListRecords/index.html.twig';
+    protected ?string $template = '@SylamentPanels/partials/Page/table.html.twig';
 
     /**
      * @param array<string, string> $parentRecords
@@ -59,6 +56,7 @@ abstract class ListRecords extends Page implements InteractsWithSchemas, Interac
             'sort' => new UrlMapping(as: 'sort'),
             'search' => new UrlMapping(as: 'search'),
             'filters' => new UrlMapping(as: 'filters'),
+            'grouping' => new UrlMapping(as: 'grouping'),
             'tab' => new UrlMapping(as: 'tab'),
             default => null,
         };
@@ -228,15 +226,13 @@ abstract class ListRecords extends Page implements InteractsWithSchemas, Interac
     }
 
     /**
-     * The filters form is cache-only and a list page declares no form of its
-     * own — so the discovery list is empty rather than the default `schema`,
-     * which would demand a `schema()` method on every dehydrate. `form()` and
-     * `infolist()` exist for the action schema resolver and are not discovered.
-     *
-     * @return array<string>
+     * @return list<string>
      */
-    public function schemas(): array
+    public function getPageClasses(): array
     {
-        return [];
+        return [
+            'sy-pa-resource-list-records-page',
+            'sy-pa-resource-' . str_replace('/', '-', $this->getResourceInstance()->getSlug()),
+        ];
     }
 }
