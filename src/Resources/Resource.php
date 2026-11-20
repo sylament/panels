@@ -7,7 +7,6 @@ namespace Sylament\Panels\Resources;
 use BackedEnum;
 use Closure;
 use Doctrine\ORM\EntityManagerInterface;
-use Doctrine\ORM\Mapping\ClassMetadata;
 use Doctrine\ORM\QueryBuilder;
 use LogicException;
 use Stringable;
@@ -24,6 +23,8 @@ use Sylament\Panels\Resources\RelationManagers\RelationManagerConfiguration;
 use Sylament\Panels\Resources\Resource\Concerns\BelongsToParent;
 use Sylament\Panels\Resources\Resource\Concerns\HasBreadcrumbs;
 use Sylament\Panels\Resources\Resource\Concerns\HasGlobalSearch;
+use Sylament\Schemas\Identity\IdentifierConstraint;
+use Sylament\Schemas\Identity\RecordKey;
 use Sylament\Schemas\Schema;
 use Sylament\Schemas\State\AssociationReader;
 use Sylament\Schemas\State\PropertyAccessor;
@@ -250,9 +251,12 @@ abstract class Resource
     }
 
     /**
-     * The record one route key names, or null. The modifier receives the record
-     * query and returns the one to key against — a different builder, such as a
-     * parent-scoped one, is what narrows a nested resource's binding.
+     * The record one route key names, or null. With no `$recordRouteKeyName`, a
+     * key no record of this class could mint names none, and is answered
+     * without a statement. The modifier receives the record query and returns
+     * the one to key against — a different builder, such as the parent scope,
+     * which narrows a clone of this same query, is what narrows a nested
+     * resource's binding.
      */
     public function resolveRecordRouteBinding(int|string $key, ?Closure $modifyQuery = null): ?object
     {
@@ -271,14 +275,23 @@ abstract class Resource
         $rootAlias = $query->getRootAliases()[0]
             ?? throw new LogicException(sprintf('The record query of resource [%s] names no root alias to resolve a record against.', static::class));
 
-        $field = $this->getRecordRouteKeyName()
-            ?? $this->getSingleIdentifierMetadata($query->getEntityManager())->getSingleIdentifierFieldName();
+        $keyName = $this->getCheckedRecordRouteKeyName();
 
-        $record = $query
-            ->andWhere(sprintf('%s.%s = :sylament_record_key', $rootAlias, $field))
-            ->setParameter('sylament_record_key', $key)
-            ->getQuery()
-            ->getOneOrNullResult();
+        if ($keyName === null) {
+            $predicate = IdentifierConstraint::equals($query, $rootAlias, $this->getRecordClass(), (string) $key, 'sylament_record_key');
+
+            if ($predicate === null) {
+                return null;
+            }
+
+            $query->andWhere($predicate);
+        } else {
+            $query
+                ->andWhere(sprintf('%s.%s = :sylament_record_key', $rootAlias, $keyName))
+                ->setParameter('sylament_record_key', $key);
+        }
+
+        $record = $query->getQuery()->getOneOrNullResult();
 
         return is_object($record) ? $record : null;
     }
@@ -286,6 +299,38 @@ abstract class Resource
     public function getRecordRouteKeyName(): ?string
     {
         return static::$recordRouteKeyName;
+    }
+
+    /**
+     * The declared `$recordRouteKeyName`, or null, once the record class's
+     * mapping shows it can name one record: a mapped field, no association, and
+     * not one field of several an identifier is made of.
+     *
+     * @throws LogicException when it names an association, no mapped field, or one field of a several-field identifier
+     */
+    private function getCheckedRecordRouteKeyName(): ?string
+    {
+        $keyName = $this->getRecordRouteKeyName();
+
+        if ($keyName === null) {
+            return null;
+        }
+
+        $metadata = $this->getEntityManager()->getClassMetadata($this->getRecordClass());
+
+        if ($metadata->hasAssociation($keyName)) {
+            throw new LogicException(sprintf('Resource [%s] names [%s] as its $recordRouteKeyName, but [%s::$%s] is an association, and a URL can carry only a field\'s value. Name a mapped field, or override getRecordRouteKey() and resolveRecordRouteBinding() together.', static::class, $keyName, $metadata->getName(), $keyName));
+        }
+
+        if (! $metadata->hasField($keyName)) {
+            throw new LogicException(sprintf('Resource [%s] names [%s] as its $recordRouteKeyName, but [%s] maps no field of that name. Name a mapped field, or override getRecordRouteKey() and resolveRecordRouteBinding() together.', static::class, $keyName, $metadata->getName()));
+        }
+
+        if ($metadata->isIdentifierComposite && in_array($keyName, $metadata->identifier, true)) {
+            throw new LogicException(sprintf('Resource [%s] names [%s] as its $recordRouteKeyName, but it is one field of the several [%s] is identified by, so it cannot name a record on its own. Leave $recordRouteKeyName unset — the default key names a record by all of them — or override getRecordRouteKey() and resolveRecordRouteBinding() together.', static::class, $keyName, $metadata->getName()));
+        }
+
+        return $keyName;
     }
 
     public function getRecordRouteKey(object $record): string
@@ -296,13 +341,13 @@ abstract class Resource
             throw new LogicException(sprintf('Resource [%s] speaks for [%s]; it cannot key a [%s].', static::class, $recordClass, $record::class));
         }
 
-        $keyName = $this->getRecordRouteKeyName();
+        $keyName = $this->getCheckedRecordRouteKeyName();
 
-        if ($keyName !== null) {
-            $key = $this->getPropertyAccessor()->getFromRecord($record, $keyName);
-        } else {
-            $key = array_first($this->getSingleIdentifierMetadata($this->getEntityManager())->getIdentifierValues($record));
+        if ($keyName === null) {
+            return RecordKey::of($this->getEntityManager(), $record, $recordClass);
         }
+
+        $key = $this->getPropertyAccessor()->getFromRecord($record, $keyName);
 
         if ($key instanceof Stringable) {
             $key = (string) $key;
@@ -377,7 +422,8 @@ abstract class Resource
             $parentResource = $this->getParentResourceInstance();
             $parentParameterName = $this->getParentRouteParameterName();
             $parentRecord = $parameters[$parentParameterName] ?? null;
-            unset($parameters[$parentParameterName]);
+            $parentPageParameters = $parameters;
+            unset($parentPageParameters[$parentParameterName]);
 
             $relationshipPage = u($this->getParentRelationshipName())->kebab()->toString();
 
@@ -385,12 +431,12 @@ abstract class Resource
                 if ($parentResource->hasPage($pageKey)) {
                     // A null parent key is omitted, so the generator names `record`
                     // as the missing parameter rather than refusing a null one.
-                    return $parentResource->getUrl($pageKey, [...$parameters, ...($parentRecord === null ? [] : ['record' => $parentRecord])], $isAbsolute, $panel, $shouldGuessMissingParameters);
+                    return $parentResource->getUrl($pageKey, [...$parentPageParameters, ...($parentRecord === null ? [] : ['record' => $parentRecord])], $isAbsolute, $panel, $shouldGuessMissingParameters);
                 }
             }
 
             if ($parentResource->hasPage('index')) {
-                return $parentResource->getUrl('index', $parameters, $isAbsolute, $panel, $shouldGuessMissingParameters);
+                return $parentResource->getUrl('index', $parentPageParameters, $isAbsolute, $panel, $shouldGuessMissingParameters);
             }
         }
 
@@ -526,21 +572,6 @@ abstract class Resource
     protected function getResourceRegistry(): ResourceRegistry
     {
         return $this->resources ?? throw $this->missingServices();
-    }
-
-    /**
-     * @return ClassMetadata<object>
-     */
-    private function getSingleIdentifierMetadata(EntityManagerInterface $entityManager): ClassMetadata
-    {
-        $recordClass = $this->getRecordClass();
-        $metadata = $entityManager->getClassMetadata($recordClass);
-
-        if ($metadata->isIdentifierComposite) {
-            throw new LogicException(sprintf('Records of [%s] carry a composite identifier, which a resource cannot key; use single-identifier entities or set the $recordRouteKeyName static property.', $recordClass));
-        }
-
-        return $metadata;
     }
 
     private function resolvePanel(Panel|string|null $panel): Panel

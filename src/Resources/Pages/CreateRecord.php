@@ -5,12 +5,14 @@ declare(strict_types=1);
 namespace Sylament\Panels\Resources\Pages;
 
 use Doctrine\ORM\EntityManagerInterface;
+use Doctrine\ORM\ORMInvalidArgumentException;
 use LogicException;
 use Sylament\Actions\Action;
 use Sylament\Actions\ActionGroup;
 use Sylament\Notifications\Notification;
 use Sylament\Panels\Pages\Concerns\HasUnsavedDataChangesAlert;
 use Sylament\Schemas\Schema;
+use Sylament\Schemas\State\Relationship;
 use Sylament\Support\Enums\Operation;
 use Sylament\Support\Exceptions\Halt;
 use Symfony\Component\HttpFoundation\RedirectResponse;
@@ -46,6 +48,15 @@ abstract class CreateRecord extends Page
     public function setRecordPersistence(EntityManagerInterface $entityManager): void
     {
         $this->entityManager = $entityManager;
+    }
+
+    /**
+     * @throws LogicException when the page was built outside the container
+     */
+    private function requireEntityManager(): EntityManagerInterface
+    {
+        return $this->entityManager
+            ?? throw new LogicException(sprintf('The resource page [%s] was built outside the container, so it holds no entity manager; register it as an autowired service.', static::class));
     }
 
     /**
@@ -98,15 +109,17 @@ abstract class CreateRecord extends Page
         try {
             $this->callHook('beforeValidate');
 
-            $data = $schema->getState();
+            $state = $schema->getState();
 
             $this->callHook('afterValidate');
 
-            $data = $this->mutateFormDataBeforeCreate($data);
+            $data = $this->mutateFormDataBeforeCreate($state);
+
+            $this->refuseUnmappedFormData($schema, $state, $data);
 
             $this->callHook('beforeCreate');
 
-            $this->record = $this->handleRecordCreation($schema->getData($data));
+            $this->record = $this->handleRecordCreation($this->mapRecordForCreation($schema, $data));
 
             $this->callHook('afterCreate');
         } catch (Halt) {
@@ -177,6 +190,27 @@ abstract class CreateRecord extends Page
     }
 
     /**
+     * The new record the form is mapped onto. The default builds the resource's
+     * record class with no arguments; override it to build a record whose
+     * constructor takes them, from $data: the form's state after
+     * mutateFormDataBeforeCreate() — every field the form maps, validated, plus
+     * any other key the browser sent in `data`, unvalidated. Read only keys a
+     * field of the form maps.
+     *
+     * @param array<string, mixed> $data
+     *
+     * @throws LogicException when the default meets a record class whose constructor requires arguments
+     */
+    protected function makeRecord(array $data): object
+    {
+        return $this->getSchema('form')->getPropertyAccessor()->constructRecord(
+            $this->getResourceInstance()->getRecordClass(),
+            sprintf('a new record on the resource page [%s]', static::class),
+            'override makeRecord() to build it from the form data.',
+        );
+    }
+
+    /**
      * @return object|array<string, mixed>|string|null
      */
     protected function getMountedActionSchemaRecord(): object|array|string|null
@@ -200,14 +234,122 @@ abstract class CreateRecord extends Page
     }
 
     /**
+     * The state mapped onto the record {@see makeRecord()} builds, called once.
+     * One created under a parent joins it before the mapping, so the record
+     * check that ends the mapping sees an identifier field the parent fills,
+     * and a many-to-many parent hands it back when the mapping refuses it; the
+     * form is bound to the made record for the mapping alone, and that check
+     * reads the form's own reader, rebound to the manager the page writes
+     * through.
+     *
+     * @param array<string, mixed> $data
+     *
+     * @throws LogicException when makeRecord() answers an object that is no instance of the resource's record class
+     */
+    private function mapRecordForCreation(Schema $schema, array $data): object
+    {
+        $resource = $this->getResourceInstance();
+        $recordClass = $resource->getRecordClass();
+        $record = $this->makeRecord($data);
+
+        if (! $record instanceof $recordClass) {
+            throw new LogicException(sprintf(
+                'The resource page [%s] built a [%s] in makeRecord(), but its resource [%s] creates [%s] records, so the form was not mapped onto it. Answer a new [%s] from makeRecord().',
+                static::class,
+                $record::class,
+                $resource::class,
+                $recordClass,
+                $recordClass,
+            ));
+        }
+
+        $parentRecord = $this->getParentRecord();
+
+        if ($parentRecord !== null) {
+            $resource->attachRecordToParent($record, $parentRecord);
+        }
+
+        $schema->setAssociationReader($schema->getAssociationReader()->withEntityManager($this->requireEntityManager()));
+
+        $binding = $schema->getRecord() ?? $schema->getRecordClass();
+        $mapped = false;
+
+        try {
+            $record = $schema->record($record)->getData($data);
+            $mapped = true;
+
+            return $record;
+        } finally {
+            $schema->record($binding);
+
+            if (! $mapped && $parentRecord !== null) {
+                $this->handRecordBackToParent($record, $parentRecord);
+            }
+        }
+    }
+
+    /**
+     * Take a record a refused create attached back out of a many-to-many
+     * parent's collection, which would otherwise hold it unsaved for the rest
+     * of the request; any other parent holds nothing of it, unless the child's
+     * setter writes it into the parent's collection itself, which the hand-back
+     * does not undo.
+     */
+    private function handRecordBackToParent(object $record, object $parentRecord): void
+    {
+        $reader = $this->getSchema('form')->getAssociationReader()->withEntityManager($this->requireEntityManager());
+        $relationship = new Relationship($parentRecord, $this->getResourceInstance()->getParentRelationshipName());
+
+        if ($reader->describeRelationship($relationship)->isManyToMany) {
+            $reader->detach($relationship, $record);
+        }
+    }
+
+    /**
+     * Refuse by name every path `mutateFormDataBeforeCreate()` added to the
+     * validated state that no component of the form maps, which the mapping
+     * would drop.
+     *
+     * @param array<string, mixed> $state the validated state the hook was handed
+     * @param array<string, mixed> $data  the hook's answer
+     *
+     * @throws LogicException when the hook added a path no component of the form maps
+     */
+    private function refuseUnmappedFormData(Schema $schema, array $state, array $data): void
+    {
+        $paths = $schema->findUnmappedAdditions($state, $data);
+
+        if ($paths === []) {
+            return;
+        }
+
+        throw new LogicException(sprintf(
+            'The %s added [%s] in %s, but no component of its %s maps those paths, so the default write would drop them. Map each with a component — a Hidden one for a value the user should not type, with required(false) where the record would otherwise require it — or %s.',
+            sprintf('resource page [%s]', static::class),
+            implode(', ', $paths),
+            'mutateFormDataBeforeCreate()',
+            'form',
+            'set it on the record in makeRecord() or handleRecordCreation()',
+        ));
+    }
+
+    /**
      * A record created under a parent joins it in the same flush — an
      * association the mapping refuses to leave empty would otherwise fail the
-     * write rather than the form.
+     * write rather than the form. A record whose assigned key is still blank
+     * once `persist()` has run every prePersist listener is refused by name
+     * before the flush and taken back out of the unit of work — except one
+     * whose whole key flattens to `''`, which Doctrine cannot take back and
+     * which stays scheduled; the form's own reader, rebound to the page's
+     * manager, answers that read. A many-to-many parent hands the record back
+     * whenever `persist()` or that read fails, Doctrine's own refusal of a key
+     * still null rethrown unchanged.
+     *
+     * @throws LogicException when the persisted record's assigned key is still blank
      */
     protected function handleRecordCreation(object $record): object
     {
-        $entityManager = $this->entityManager
-            ?? throw new LogicException(sprintf('The resource page [%s] was built outside the container, so it holds no entity manager; register it as an autowired service.', static::class));
+        $entityManager = $this->requireEntityManager();
 
         $parentRecord = $this->getParentRecord();
 
@@ -215,7 +357,35 @@ abstract class CreateRecord extends Page
             $this->getResourceInstance()->attachRecordToParent($record, $parentRecord);
         }
 
-        $entityManager->persist($record);
+        $persisted = false;
+
+        try {
+            $entityManager->persist($record);
+
+            $form = $this->getSchema('form');
+
+            if ($form->getAssociationReader()->withEntityManager($entityManager)->hasBlankAssignedIdentifier($record)) {
+                try {
+                    $entityManager->detach($record);
+                } catch (ORMInvalidArgumentException) {
+                    // Doctrine can neither detach nor remove a persisted entity whose identity hash is '': it stays scheduled, and nothing flushes after the refusal.
+                }
+
+                throw new LogicException(sprintf(
+                    'The resource page [%s] built a [%s] whose identifier is still blank after persist(), so it was not saved. Give every identifier field a form field — a Hidden one for a value the user should not type — or fill it in a prePersist listener, in makeRecord(), or in handleRecordCreation() before calling the parent.%s',
+                    static::class,
+                    $record::class,
+                    $form->isRecordKeyValidated() ? '' : ' The schema switches the key rules off with validateRecordKey(false), so a key field it maps is not refused while blank; switch them back on to have the blank field refused under it.',
+                ));
+            }
+
+            $persisted = true;
+        } finally {
+            if (! $persisted && $parentRecord !== null) {
+                $this->handRecordBackToParent($record, $parentRecord);
+            }
+        }
+
         $entityManager->flush();
 
         return $record;
