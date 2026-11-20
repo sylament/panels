@@ -169,7 +169,7 @@ abstract class Page implements InteractsWithActions, InteractsWithSchemas
      * The discovery list is empty rather than the default `schema`, which would
      * demand a `schema()` method on every dehydrate; a page names what it
      * declares. `content` stays out of it deliberately: the name resolves at
-     * render, so an empty content schema costs a live request nothing.
+     * render, so a live request that does not render builds no body.
      *
      * @return array<string>
      */
@@ -181,6 +181,11 @@ abstract class Page implements InteractsWithActions, InteractsWithSchemas
     public function content(Schema $schema): Schema
     {
         return $schema;
+    }
+
+    public function getDefaultTestingSchemaName(): ?string
+    {
+        return ($this->resolveSchemaByName('form') instanceof Schema) ? 'form' : 'content';
     }
 
     public function hasUnsavedDataChangesAlert(): bool
